@@ -1,0 +1,12 @@
+body {
+  font-family: 'Inter', sans-serif;
+}
+
+.transaction-item:not(:last-child) {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.nav-active {
+  background-color: #16a34a; /* green-700 */
+  color: white;
+}
