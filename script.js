@@ -11,9 +11,14 @@ const homePage = document.getElementById('home-page');
 const historyPage = document.getElementById('history-page');
 const navHome = document.getElementById('nav-home');
 const navHistory = document.getElementById('nav-history');
+const deleteModal = document.getElementById('delete-modal');
+const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
 
 // --- State ---
 let transactions = JSON.parse(localStorage.getItem('transactions')) || [];
+let pressTimer = null;
+let transactionIdToDelete = null;
 
 function saveTransactions() {
   localStorage.setItem('transactions', JSON.stringify(transactions));
@@ -23,19 +28,12 @@ function updateSummary() {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
   const allAmounts = transactions.map(t => t.amount);
   const total = allAmounts.reduce((acc, item) => acc + item, 0);
   balanceDisplay.innerText = total < 0 ? `-${formatAsRupee(Math.abs(total))}` : formatAsRupee(total);
-
-  const monthlyIncome = transactions
-    .filter(t => t.amount > 0 && new Date(t.date) >= monthStart)
-    .reduce((acc, t) => acc + t.amount, 0);
+  const monthlyIncome = transactions.filter(t => t.amount > 0 && new Date(t.date) >= monthStart).reduce((acc, t) => acc + t.amount, 0);
   totalIncomeDisplay.innerText = formatAsRupee(monthlyIncome);
-
-  const dailyExpense = transactions
-    .filter(t => t.amount < 0 && new Date(t.date) >= todayStart)
-    .reduce((acc, t) => acc + t.amount, 0);
+  const dailyExpense = transactions.filter(t => t.amount < 0 && new Date(t.date) >= todayStart).reduce((acc, t) => acc + t.amount, 0);
   totalExpenseDisplay.innerText = formatAsRupee(Math.abs(dailyExpense));
 }
 
@@ -44,7 +42,6 @@ function renderRecentHistory() {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const todaysTransactions = transactions.filter(t => new Date(t.date) >= todayStart).reverse();
-
   if (todaysTransactions.length === 0) {
     recentTransactionList.innerHTML = '<p class="text-center text-gray-500 p-4">No transactions for today.</p>';
   } else {
@@ -53,14 +50,28 @@ function renderRecentHistory() {
 }
 
 function addTransactionToDOM(transaction, listElement) {
-  const { description, amount } = transaction;
   const item = document.createElement('li');
   item.className = 'transaction-item flex justify-between items-center p-3';
-  const isExpense = amount < 0;
+  item.dataset.id = transaction.id;
+  const isExpense = transaction.amount < 0;
   const sign = isExpense ? '-' : '+';
   const color = isExpense ? 'text-red-500' : 'text-green-500';
-  const formattedAmount = `${sign}${formatAsRupee(Math.abs(amount))}`;
-  item.innerHTML = `<span>${description}</span><span class="${color} font-semibold">${formattedAmount}</span>`;
+  const formattedAmount = `${sign}${formatAsRupee(Math.abs(transaction.amount))}`;
+  item.innerHTML = `<span>${transaction.description}</span><span class="${color} font-semibold">${formattedAmount}</span>`;
+
+  // Right-click delete
+  item.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    triggerDelete(transaction.id);
+  });
+
+  // Long-press delete (mobile)
+  item.addEventListener('mousedown', () => startPress(transaction.id));
+  item.addEventListener('touchstart', () => startPress(transaction.id));
+  item.addEventListener('mouseup', cancelPress);
+  item.addEventListener('mouseleave', cancelPress);
+  item.addEventListener('touchend', cancelPress);
+
   listElement.appendChild(item);
 }
 
@@ -77,24 +88,20 @@ function renderFullHistory() {
     return acc;
   }, {});
   const sortedDates = Object.keys(groupedByDate).sort((a, b) => new Date(b) - new Date(a)).reverse();
-
   for (const date of sortedDates) {
     const dateContainer = document.createElement('div');
     const dateHeader = document.createElement('h3');
     dateHeader.className = 'text-lg font-semibold text-gray-700 border-b pb-2 mb-2';
     dateHeader.innerText = date;
     dateContainer.appendChild(dateHeader);
-
     const dailyTransactions = groupedByDate[date];
     const dailyExpense = dailyTransactions.filter(t => t.amount < 0).reduce((acc, t) => acc + t.amount, 0);
-
     if (dailyExpense < 0) {
       const dailySummary = document.createElement('div');
       dailySummary.className = 'text-sm text-gray-600 p-3 bg-gray-50 rounded-md mb-2 flex justify-between items-center';
       dailySummary.innerHTML = `<span>Total Expenses for the day:</span> <span class="font-semibold text-red-500">${formatAsRupee(Math.abs(dailyExpense))}</span>`;
       dateContainer.appendChild(dailySummary);
     }
-
     const dailyList = document.createElement('ul');
     dailyTransactions.forEach(t => addTransactionToDOM(t, dailyList));
     dateContainer.appendChild(dailyList);
@@ -113,14 +120,11 @@ function handleFormSubmit(event) {
   const isIncome = rawAmountString.startsWith('+');
   const amountString = rawAmountString.replace(/[^0-9.]/g, '');
   let amount = parseFloat(amountString);
-
   if (description === '' || isNaN(amount)) return;
   if (!isIncome) amount = -Math.abs(amount);
-
   transactions.push({ id: Date.now(), description, amount, date: new Date().toISOString() });
   saveTransactions();
   updateAll();
-
   descriptionInput.value = '';
   amountInput.value = '';
   descriptionInput.focus();
@@ -129,36 +133,56 @@ function handleFormSubmit(event) {
 function formatCurrencyInput(event) {
   let value = event.target.value;
   if (!value) return;
-
   let cursorPosition = event.target.selectionStart;
   let originalLength = value.length;
-
   let sign = '';
   if (value.startsWith('+')) sign = '+';
   else if (value.startsWith('-')) sign = '-';
-
   let numericValue = value.replace(/[^0-9.]/g, '');
   const parts = numericValue.split('.');
   if (parts.length > 2) numericValue = parts[0] + '.' + parts.slice(1).join('');
-
   let integerPart = parts[0];
   let decimalPart = parts.length > 1 ? '.' + parts[1] : '';
   integerPart = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-
   let formattedValue = sign + integerPart + decimalPart;
   event.target.value = formattedValue;
-
   let newLength = formattedValue.length;
   event.target.setSelectionRange(cursorPosition + (newLength - originalLength), cursorPosition + (newLength - originalLength));
 }
 
+// --- Deletion Logic ---
+function triggerDelete(id) {
+  transactionIdToDelete = id;
+  deleteModal.classList.remove('hidden');
+}
+function startPress(id) {
+  pressTimer = setTimeout(() => triggerDelete(id), 800);
+}
+function cancelPress() {
+  clearTimeout(pressTimer);
+}
+function confirmDeletion() {
+  transactions = transactions.filter(t => t.id !== transactionIdToDelete);
+  saveTransactions();
+  updateAll();
+  if (!historyPage.classList.contains('hidden')) {
+    renderFullHistory();
+  }
+  deleteModal.classList.add('hidden');
+  transactionIdToDelete = null;
+}
+function cancelDeletion() {
+  deleteModal.classList.add('hidden');
+  transactionIdToDelete = null;
+}
+
+// --- Navigation ---
 function showHomePage() {
   homePage.classList.remove('hidden');
   historyPage.classList.add('hidden');
   navHome.classList.add('nav-active');
   navHistory.classList.remove('nav-active');
 }
-
 function showHistoryPage() {
   homePage.classList.add('hidden');
   historyPage.classList.remove('hidden');
@@ -177,6 +201,8 @@ function init() {
   amountInput.addEventListener('input', formatCurrencyInput);
   navHome.addEventListener('click', showHomePage);
   navHistory.addEventListener('click', showHistoryPage);
+  confirmDeleteBtn.addEventListener('click', confirmDeletion);
+  cancelDeleteBtn.addEventListener('click', cancelDeletion);
   updateAll();
 }
 
