@@ -113,15 +113,12 @@ function renderDashboard() {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthlyExpenses = transactions.filter(t => t.amount < 0 && new Date(t.date) >= monthStart);
 
-    // Total Expense
     const total = monthlyExpenses.reduce((acc, t) => acc + t.amount, 0);
     dashboardTotalExpense.innerText = formatAsRupee(Math.abs(total));
 
-    // Highest Expense
     const highest = monthlyExpenses.reduce((max, t) => Math.abs(t.amount) > max ? Math.abs(t.amount) : max, 0);
     dashboardHighestExpense.innerText = formatAsRupee(highest);
 
-    // Top Categories
     const categories = monthlyExpenses.reduce((acc, t) => {
         acc[t.category] = (acc[t.category] || 0) + Math.abs(t.amount);
         return acc;
@@ -139,8 +136,7 @@ function renderDashboard() {
         dashboardTopCategories.innerHTML = '<p class="text-center text-gray-500 p-4">No expenses this month.</p>';
     }
 
-    // Expense Chart
-    if (expenseChart) expenseChart.destroy(); // Clear previous chart
+    if (expenseChart) expenseChart.destroy();
     expenseChart = new Chart(expenseChartCanvas, {
         type: 'pie',
         data: {
@@ -161,13 +157,20 @@ function formatAsRupee(number) {
 function handleFormSubmit(event) {
     event.preventDefault();
     const description = descriptionInput.value.trim();
-    const rawAmountString = amountInput.value.trim();
     const category = categoryInput.value;
-    const isIncome = rawAmountString.startsWith('+');
-    const amountString = rawAmountString.replace(/[^0-9.]/g, '');
+    
+    // MODIFIED: Logic changed to rely on category instead of '+' sign
+    const amountString = amountInput.value.trim().replace(/[^0-9.]/g, ''); // Clean the string
     let amount = parseFloat(amountString);
+
     if (description === '' || isNaN(amount)) return;
-    if (!isIncome) amount = -Math.abs(amount);
+
+    // Ensure amount is positive first, then make it negative if it's an expense
+    amount = Math.abs(amount); 
+    if (category !== 'income') {
+        amount = -amount;
+    }
+    
     transactions.push({ id: Date.now(), description, amount, category, date: new Date().toISOString() });
     saveTransactions();
     updateAll();
@@ -181,17 +184,19 @@ function formatCurrencyInput(event) {
     if (!value) return;
     let cursorPosition = event.target.selectionStart;
     let originalLength = value.length;
-    let sign = '';
-    if (value.startsWith('+')) sign = '+';
-    else if (value.startsWith('-')) sign = '-';
+
+    // MODIFIED: Removed sign handling
     let numericValue = value.replace(/[^0-9.]/g, '');
     const parts = numericValue.split('.');
     if (parts.length > 2) numericValue = parts[0] + '.' + parts.slice(1).join('');
+    
     let integerPart = parts[0];
     let decimalPart = parts.length > 1 ? '.' + parts[1] : '';
     integerPart = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    let formattedValue = sign + integerPart + decimalPart;
+    
+    let formattedValue = integerPart + decimalPart;
     event.target.value = formattedValue;
+    
     let newLength = formattedValue.length;
     event.target.setSelectionRange(cursorPosition + (newLength - originalLength), cursorPosition + (newLength - originalLength));
 }
@@ -219,10 +224,8 @@ function cancelDeletion() {
 function showPage(pageToShow) {
     [homePage, historyPage, dashboardPage].forEach(p => p.classList.add('hidden'));
     [navHome, navHistory, navDashboard].forEach(n => n.classList.remove('nav-active'));
-
     pageToShow.page.classList.remove('hidden');
     pageToShow.nav.classList.add('nav-active');
-
     if (pageToShow.onShow) pageToShow.onShow();
 }
 
